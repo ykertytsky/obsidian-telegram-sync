@@ -308,7 +308,7 @@ export async function transcribeWithWhisper(
 	}
 
 	const fileObject = msg.voice || msg.video_note;
-	const fileId = fileObject.file_id;
+	const fileId = fileObject!.file_id;
 
 	// Download the audio file from Telegram
 	const fileLink = await bot.getFileLink(fileId);
