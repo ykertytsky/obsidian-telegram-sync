@@ -18,7 +18,7 @@ import { ProgressBarType, _3MB, createProgressBar, deleteProgressBar, updateProg
 import { getFileObject } from "./getters";
 import { TFile } from "obsidian";
 import { enqueue } from "src/utils/queues";
-import { _15sec, _1sec, displayAndLog, displayAndLogError } from "src/utils/logUtils";
+import { _15sec, _1sec, _1h, displayAndLog, displayAndLogError } from "src/utils/logUtils";
 import { getMessageDistributionRule } from "./filterEvaluations";
 import { MessageDistributionRule, getMessageDistributionRuleInfo } from "src/settings/messageDistribution";
 import { getOffsetDate, unixTime2Date } from "src/utils/dateUtils";
@@ -143,8 +143,14 @@ export async function handleMessage(plugin: TelegramSyncPlugin, msg: TelegramBot
 
 	++plugin.messagesLeftCnt;
 	try {
-		if (!msg.text && distributionRule.filePathTemplate) await handleFiles(plugin, msg, distributionRule);
-		else await handleMessageText(plugin, msg, distributionRule);
+		const isVoiceMessage = !!(msg.voice || msg.video_note) && !msg.text;
+		if (isVoiceMessage && plugin.settings.whisperApiKey) {
+			await handleVoiceMessage(plugin, msg, distributionRule);
+		} else if (!msg.text && distributionRule.filePathTemplate) {
+			await handleFiles(plugin, msg, distributionRule);
+		} else {
+			await handleMessageText(plugin, msg, distributionRule);
+		}
 	} catch (error) {
 		await displayAndLogError(plugin, error, "", "", msg, _15sec);
 	} finally {
@@ -178,6 +184,39 @@ export async function handleMessageText(
 		distributionRule.reversedOrder,
 	);
 	await finalizeMessageProcessing(plugin, msg);
+}
+
+// Handle voice messages by transcribing them with Whisper and saving as text notes.
+// The original Telegram voice message is deleted after successful transcription.
+export async function handleVoiceMessage(
+	plugin: TelegramSyncPlugin,
+	msg: TelegramBot.Message,
+	distributionRule: MessageDistributionRule,
+) {
+	if (!plugin.bot || !plugin.settings.whisperApiKey) return;
+
+	let transcript: string;
+	try {
+		transcript = await Client.transcribeWithWhisper(plugin.bot, msg, plugin.settings.whisperApiKey);
+	} catch (transcriptionError) {
+		// Transcription failed: surface the error and keep the original message
+		await displayAndLogError(plugin, transcriptionError, "", "Whisper transcription failed. Voice message kept.", msg, _15sec);
+		return;
+	}
+
+	if (!transcript) {
+		displayAndLog(plugin, "Whisper transcription produced no text (silent or non-speech audio). Voice message kept.", _15sec);
+		return;
+	}
+
+	// Override the message text with the transcript so downstream processing treats it as a text note
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(msg as any).text = transcript;
+	// Mark for always-delete after successful transcription
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	(msg as any).deleteAfterWhisperTranscription = true;
+
+	await handleMessageText(plugin, msg, distributionRule);
 }
 
 async function createNoteContent(
