@@ -3,18 +3,22 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 4.0.0). Leave empty to use package.json version.'
+        required: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -34,22 +38,38 @@ jobs:
             fi
           done
 
-      - name: Generate release notes
+      - name: Determine tag name
+        id: tag
         run: |
-          if [ -f release-notes.mjs ]; then
-            node release-notes.mjs > release-notes.md
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
           else
-            echo 'Fallback release note' > release-notes.md
+            TAG=$(node -p "require('./package.json').version")
+          fi
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          VERSION="${{ steps.tag.outputs.name }}"
+          VERSION="${VERSION#v}"
+          if [ -f CHANGELOG.md ]; then
+            awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md > release-notes.md
+          fi
+          if [ ! -s release-notes.md ]; then
+            echo "Release ${VERSION}" > release-notes.md
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag: ${{ github.ref }}
-          files:
-            - main.js
-            - manifest.json
-            - styles.css
-          name: Release ${{ github.ref }}
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          body_path: release-notes.md
+          files: |
+            main.js
+            manifest.json
+            styles.css
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
