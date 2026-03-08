@@ -2,6 +2,7 @@ import { Api, TelegramClient } from "telegram";
 import { StoreSession } from "telegram/sessions";
 import { releaseVersion, versionALessThanVersionB } from "release-notes.mjs";
 import TelegramBot from "node-telegram-bot-api";
+import { requestUrl } from "obsidian";
 import QRCode from "qrcode";
 import os from "os";
 import { convertBotFileToMessageMedia } from "../convertors/botFileToMessageMedia";
@@ -310,39 +311,49 @@ export async function transcribeWithWhisper(
 	const fileObject = msg.voice || msg.video_note;
 	const fileId = fileObject!.file_id;
 
-	// Download the audio file from Telegram
+	// Download the audio file from Telegram via requestUrl (bypasses CORS in Obsidian/Electron)
 	const fileLink = await bot.getFileLink(fileId);
-	const downloadResponse = await fetch(fileLink);
-	if (!downloadResponse.ok) {
-		throw new Error(`Failed to download voice file: ${downloadResponse.status} ${downloadResponse.statusText}`);
+	const downloadResponse = await requestUrl({ url: fileLink, throw: false });
+	if (downloadResponse.status < 200 || downloadResponse.status >= 300) {
+		throw new Error(`Failed to download voice file: ${downloadResponse.status}`);
 	}
-	const audioBuffer = await downloadResponse.arrayBuffer();
+	const audioBuffer = downloadResponse.arrayBuffer;
 
 	// Determine mime type and extension
 	const mimeType = msg.voice ? "audio/ogg" : "video/mp4";
 	const ext = msg.voice ? "ogg" : "mp4";
 
-	// Build multipart form data for Whisper API
-	const audioBlob = new Blob([audioBuffer], { type: mimeType });
-	const formData = new FormData();
-	formData.append("file", audioBlob, `voice.${ext}`);
-	formData.append("model", "whisper-1");
+	// Build multipart/form-data body manually (requestUrl body must be string | ArrayBuffer)
+	const boundary = "----TelegramSyncBoundary" + Math.random().toString(36).slice(2);
+	const encoder = new TextEncoder();
+	const partHeader = encoder.encode(
+		`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.${ext}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+	);
+	const partFooter = encoder.encode(
+		`\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--${boundary}--\r\n`,
+	);
+	const multipartBody = new Uint8Array(partHeader.byteLength + audioBuffer.byteLength + partFooter.byteLength);
+	multipartBody.set(partHeader, 0);
+	multipartBody.set(new Uint8Array(audioBuffer), partHeader.byteLength);
+	multipartBody.set(partFooter, partHeader.byteLength + audioBuffer.byteLength);
 
-	// Call OpenAI Whisper transcription API
-	const whisperResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+	// Call OpenAI Whisper transcription API via requestUrl (bypasses CORS)
+	const whisperResponse = await requestUrl({
+		url: "https://api.openai.com/v1/audio/transcriptions",
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${whisperApiKey}`,
+			"Content-Type": `multipart/form-data; boundary=${boundary}`,
 		},
-		body: formData,
+		body: multipartBody.buffer,
+		throw: false,
 	});
 
-	if (!whisperResponse.ok) {
-		const errorText = await whisperResponse.text();
-		throw new Error(`Whisper transcription failed (${whisperResponse.status}): ${errorText}`);
+	if (whisperResponse.status < 200 || whisperResponse.status >= 300) {
+		throw new Error(`Whisper transcription failed (${whisperResponse.status}): ${whisperResponse.text}`);
 	}
 
-	const result = await whisperResponse.json();
+	const result = whisperResponse.json;
 	return (result as { text: string }).text || "";
 }
 

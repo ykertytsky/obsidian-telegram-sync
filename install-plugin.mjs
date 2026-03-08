@@ -1,14 +1,18 @@
 import fs from "fs";
 import path from "path";
-import manifest from "./manifest.json" assert { type: "json" };
+import manifest from "./manifest.json" with { type: "json" };
 import https from "https";
 
-const destinationFolder = process.argv[2];
+// Join all argv args to handle vault paths that contain spaces
+const destinationFolder = process.argv.slice(2).join(" ") || (fs.existsSync(".vault-path") ? fs.readFileSync(".vault-path", "utf8").trim() : "");
 
 if (!destinationFolder) {
 	console.error("Please provide path to Obsidian Vault");
 	process.exit(1);
 }
+
+// Persist the vault path locally so 'npm run dev' can use it via esbuild
+fs.writeFileSync(".vault-path", destinationFolder);
 
 const pluginsFolder = path.join(destinationFolder, ".obsidian", "plugins");
 const thisPluginFolder = path.join(pluginsFolder, manifest.id);

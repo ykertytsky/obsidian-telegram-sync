@@ -188,8 +188,8 @@ export class TelegramSyncSettingTab extends PluginSettingTab {
 		privacyPolicyButton.style.color = "LightCoral";
 		privacyPolicyButton.style.textDecoration = "None";
 
-		this.containerEl.createEl("div", { text: "Created by " }).createEl("a", {
-			text: "soberhacker🍃🧘💻",
+		this.containerEl.createEl("div", { text: "Created HUY " }).createEl("a", {
+			text: "notsomber",
 			href: "https://github.com/soberhacker",
 		});
 

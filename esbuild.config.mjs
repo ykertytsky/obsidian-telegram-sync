@@ -10,7 +10,21 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === "production";
 const test = process.argv[2] === "test";
-const mainPath = "main.js";
+
+// In dev/test mode, output directly into the vault plugin folder so hot-reload
+// picks up every rebuild automatically without a separate install step.
+import fs from "fs";
+import manifest from "./manifest.json" with { type: "json" };
+let mainPath = "main.js";
+if (!prod) {
+	const vaultPathFile = ".vault-path";
+	if (fs.existsSync(vaultPathFile)) {
+		const vaultPath = fs.readFileSync(vaultPathFile, "utf8").trim();
+		if (vaultPath) {
+			mainPath = `${vaultPath}/.obsidian/plugins/${manifest.id}/main.js`;
+		}
+	}
+}
 
 const context = await esbuild.context({
 	banner: {
@@ -32,7 +46,9 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins,
+		// Exclude punycode from externals so esbuild bundles the npm package.
+		// Node.js v22+ removed it from core; Electron's renderer no longer ships it.
+		...builtins.filter((m) => m !== "punycode"),
 	],
 	format: "cjs",
 	target: "es2018",
