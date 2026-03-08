@@ -187,7 +187,7 @@ export async function handleMessageText(
 }
 
 // Handle voice messages by transcribing them with Whisper and saving as text notes.
-// The original Telegram voice message is deleted after successful transcription.
+// Pipeline: download audio → (save to vault if filePathTemplate set) → transcribe → save note → delete vault file → normal finalize.
 export async function handleVoiceMessage(
 	plugin: TelegramSyncPlugin,
 	msg: TelegramBot.Message,
@@ -195,11 +195,42 @@ export async function handleVoiceMessage(
 ) {
 	if (!plugin.bot || !plugin.settings.whisperApiKey) return;
 
+	// Step 1: Download audio once (reused for both vault save and transcription)
+	let audioBuffer: ArrayBuffer;
+	try {
+		audioBuffer = await Client.downloadVoiceBuffer(plugin.bot, msg);
+	} catch (downloadError) {
+		await displayAndLogError(plugin, downloadError, "", "Whisper: failed to download voice file. Voice message kept.", msg, _15sec);
+		return;
+	}
+
+	// Step 2: If the distribution rule has a file path template, save the voice file to vault
+	let savedVaultFilePath: string | undefined;
+	if (distributionRule.filePathTemplate) {
+		try {
+			const fileType = msg.voice ? "voice" : "video_note";
+			const ext = msg.voice ? "ogg" : "mp4";
+			let filePath = await applyFilesPathTemplate(plugin, distributionRule.filePathTemplate, msg, fileType, ext, "voice");
+			const folderPath = path.dirname(filePath);
+			if (folderPath !== ".") createFolderIfNotExist(plugin.app.vault, folderPath);
+			filePath = await enqueue(getUniqueFilePath, plugin.app.vault, plugin.createdFilePaths, filePath, unixTime2Date(msg.date, msg.message_id), ext);
+			await plugin.app.vault.createBinary(filePath, new Uint8Array(audioBuffer));
+			savedVaultFilePath = filePath;
+		} catch (saveError) {
+			displayAndLog(plugin, `Whisper: could not save voice file to vault: ${saveError}`, _15sec);
+		}
+	}
+
+	// Step 3: Transcribe using the already-downloaded buffer
 	let transcript: string;
 	try {
-		transcript = await Client.transcribeWithWhisper(plugin.bot, msg, plugin.settings.whisperApiKey);
+		transcript = await Client.transcribeWithWhisper(plugin.bot, msg, plugin.settings.whisperApiKey, audioBuffer);
 	} catch (transcriptionError) {
-		// Transcription failed: surface the error and keep the original message
+		// Clean up vault file on failure, keep Telegram message
+		if (savedVaultFilePath) {
+			const vf = plugin.app.vault.getAbstractFileByPath(savedVaultFilePath);
+			if (vf) await plugin.app.vault.delete(vf);
+		}
 		await displayAndLogError(plugin, transcriptionError, "", "Whisper transcription failed. Voice message kept.", msg, _15sec);
 		return;
 	}
@@ -209,14 +240,18 @@ export async function handleVoiceMessage(
 		return;
 	}
 
-	// Override the message text with the transcript so downstream processing treats it as a text note
+	// Step 4: Save transcript as a note (same behaviour as text notes)
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	(msg as any).text = transcript;
-	// Mark for always-delete after successful transcription
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	(msg as any).deleteAfterWhisperTranscription = true;
-
+	(msg as any).whisperTranscribed = true;
 	await handleMessageText(plugin, msg, distributionRule);
+
+	// Step 5: Delete vault voice file now that the transcript note has been saved
+	if (savedVaultFilePath) {
+		const vaultFile = plugin.app.vault.getAbstractFileByPath(savedVaultFilePath);
+		if (vaultFile) await plugin.app.vault.delete(vaultFile);
+	}
 }
 
 async function createNoteContent(

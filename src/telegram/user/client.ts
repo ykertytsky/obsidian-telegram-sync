@@ -299,25 +299,29 @@ export async function transcribeAudio(
 	return transcribedAudio.text;
 }
 
+export async function downloadVoiceBuffer(bot: TelegramBot, msg: TelegramBot.Message): Promise<ArrayBuffer> {
+	const fileObject = msg.voice || msg.video_note;
+	if (!fileObject) throw new Error("Message has no voice or video_note");
+	const fileLink = await bot.getFileLink(fileObject.file_id);
+	const downloadResponse = await requestUrl({ url: fileLink, throw: false });
+	if (downloadResponse.status < 200 || downloadResponse.status >= 300) {
+		throw new Error(`Failed to download voice file: ${downloadResponse.status}`);
+	}
+	return downloadResponse.arrayBuffer;
+}
+
 export async function transcribeWithWhisper(
 	bot: TelegramBot,
 	msg: TelegramBot.Message,
 	whisperApiKey: string,
+	preDownloadedBuffer?: ArrayBuffer,
 ): Promise<string> {
 	if (!(msg.voice || msg.video_note)) {
 		return "";
 	}
 
-	const fileObject = msg.voice || msg.video_note;
-	const fileId = fileObject!.file_id;
-
-	// Download the audio file from Telegram via requestUrl (bypasses CORS in Obsidian/Electron)
-	const fileLink = await bot.getFileLink(fileId);
-	const downloadResponse = await requestUrl({ url: fileLink, throw: false });
-	if (downloadResponse.status < 200 || downloadResponse.status >= 300) {
-		throw new Error(`Failed to download voice file: ${downloadResponse.status}`);
-	}
-	const audioBuffer = downloadResponse.arrayBuffer;
+	// Use a pre-downloaded buffer if provided, otherwise download from Telegram
+	const audioBuffer = preDownloadedBuffer ?? (await downloadVoiceBuffer(bot, msg));
 
 	// Determine mime type and extension
 	const mimeType = msg.voice ? "audio/ogg" : "video/mp4";
