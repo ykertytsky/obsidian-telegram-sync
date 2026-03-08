@@ -68,6 +68,7 @@ export interface TelegramSyncSettings {
 	processOldMessagesSettings: ProcessOldMessagesSettings;
 	processOtherBotsMessages: boolean;
 	retryFailedMessagesProcessing: boolean;
+	whisperApiKey: string;
 	// add new settings above this line
 	topicNames: Topic[];
 }
@@ -92,6 +93,7 @@ export const DEFAULT_SETTINGS: TelegramSyncSettings = {
 	processOldMessagesSettings: getDefaultProcessOldMessagesSettings(),
 	processOtherBotsMessages: false,
 	retryFailedMessagesProcessing: false,
+	whisperApiKey: "",
 	// add new settings above this line
 	topicNames: [],
 };

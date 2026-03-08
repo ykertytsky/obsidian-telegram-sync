@@ -298,6 +298,54 @@ export async function transcribeAudio(
 	return transcribedAudio.text;
 }
 
+export async function transcribeWithWhisper(
+	bot: TelegramBot,
+	msg: TelegramBot.Message,
+	whisperApiKey: string,
+): Promise<string> {
+	if (!(msg.voice || msg.video_note)) {
+		return "";
+	}
+
+	const fileObject = msg.voice || msg.video_note;
+	const fileId = fileObject.file_id;
+
+	// Download the audio file from Telegram
+	const fileLink = await bot.getFileLink(fileId);
+	const downloadResponse = await fetch(fileLink);
+	if (!downloadResponse.ok) {
+		throw new Error(`Failed to download voice file: ${downloadResponse.status} ${downloadResponse.statusText}`);
+	}
+	const audioBuffer = await downloadResponse.arrayBuffer();
+
+	// Determine mime type and extension
+	const mimeType = msg.voice ? "audio/ogg" : "video/mp4";
+	const ext = msg.voice ? "ogg" : "mp4";
+
+	// Build multipart form data for Whisper API
+	const audioBlob = new Blob([audioBuffer], { type: mimeType });
+	const formData = new FormData();
+	formData.append("file", audioBlob, `voice.${ext}`);
+	formData.append("model", "whisper-1");
+
+	// Call OpenAI Whisper transcription API
+	const whisperResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${whisperApiKey}`,
+		},
+		body: formData,
+	});
+
+	if (!whisperResponse.ok) {
+		const errorText = await whisperResponse.text();
+		throw new Error(`Whisper transcription failed (${whisperResponse.status}): ${errorText}`);
+	}
+
+	const result = await whisperResponse.json();
+	return (result as { text: string }).text || "";
+}
+
 export async function subscribedOnInsiderChannel(): Promise<boolean> {
 	if (!client || !client.connected || _sessionType == "bot") return false;
 	try {

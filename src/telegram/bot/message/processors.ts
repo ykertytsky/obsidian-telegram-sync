@@ -37,6 +37,8 @@ export async function finalizeMessageProcessing(plugin: TelegramSyncPlugin, msg:
 	const originalMsg: Api.Message | undefined = (msg as any).originalUserMsg;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const mediaMessages: TelegramBot.Message[] = (msg as any).mediaMessages || [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const deleteAfterWhisper: boolean = (msg as any).deleteAfterWhisperTranscription || false;
 
 	if (originalMsg) {
 		await plugin.bot.deleteMessage(msg.chat.id, msg.message_id);
@@ -46,12 +48,15 @@ export async function finalizeMessageProcessing(plugin: TelegramSyncPlugin, msg:
 	const timeDifference = new Date().getTime() - messageTime.getTime();
 	const hoursDifference = timeDifference / _1h;
 
-	if (plugin.settings.deleteMessagesFromTelegram && originalMsg) {
+	if ((plugin.settings.deleteMessagesFromTelegram || deleteAfterWhisper) && originalMsg) {
 		await originalMsg.delete();
 	} else if (plugin.settings.deleteMessagesFromTelegram && hoursDifference <= 24) {
 		for (const mediaMsg of mediaMessages) {
 			await plugin.bot.deleteMessage(mediaMsg.chat.id, mediaMsg.message_id);
 		}
+		await plugin.bot.deleteMessage(msg.chat.id, msg.message_id);
+	} else if (deleteAfterWhisper && hoursDifference <= 48) {
+		// Telegram bot API allows bots to delete messages up to 48 hours after posting
 		await plugin.bot.deleteMessage(msg.chat.id, msg.message_id);
 	} else {
 		let needReply = true;

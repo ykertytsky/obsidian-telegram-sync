@@ -21,6 +21,7 @@ export class AdvancedSettingsModal extends Modal {
 		this.addDeleteMessagesFromTelegram();
 		this.addMessageDelimiterSetting();
 		this.addParallelMessageProcessing();
+		this.addWhisperApiKey();
 	}
 
 	addHeader() {
@@ -82,6 +83,23 @@ export class AdvancedSettingsModal extends Modal {
 					this.plugin.settings.deleteMessagesFromTelegram = value;
 					await this.plugin.saveSettings();
 				});
+			});
+	}
+
+	addWhisperApiKey() {
+		new Setting(this.advancedSettingsDiv)
+			.setName("OpenAI Whisper API key")
+			.setDesc(
+				"When set, incoming voice messages are automatically transcribed using OpenAI Whisper and saved as text notes. The original voice message is deleted from Telegram after successful transcription. Leave empty to disable Whisper transcription.",
+			)
+			.addText((text) => {
+				text.setPlaceholder("sk-…")
+					.setValue(this.plugin.settings.whisperApiKey)
+					.onChange(async (value) => {
+						this.plugin.settings.whisperApiKey = value.trim();
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.type = "password";
 			});
 	}
 
