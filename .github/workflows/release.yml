@@ -1,58 +1,55 @@
-name: Release Obsidian plugin
+name: Release
 
 on:
-    pull_request_target:
-        types:
-            - closed
-        branches:
-            - main
-
-permissions:
-    contents: write
-    pull-requests: write
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
-    release:
-        if: ${{ github.event.pull_request.merged == true && github.head_ref == 'develop' && github.event.pull_request.author_association == 'OWNER' }}
-        runs-on: ubuntu-latest
-        steps:
-            - name: Print github
-              run: echo '${{ toJson(github) }}'
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-            - name: Checkout repository
-              uses: actions/checkout@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-            - name: Set up Node.js
-              uses: actions/setup-node@v3
-              with:
-                  node-version: "18.x"
+      - name: Install dependencies
+        run: npm ci
 
-            - name: Build plugin main.js
-              id: build_plugin
-              run: |
-                  git config core.autocrlf false
-                  git config core.eol lf
-                  npm ci
-                  npm run build
+      - name: Build the project
+        run: npm run build
 
-                  TAG_NAME=$(node -p "require('./package.json').version")
-                  echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+      - name: Verify required files exist
+        run: |
+          for file in main.js manifest.json styles.css; do
+            if [ ! -f "$file" ]; then
+              echo "$file does not exist!"
+              exit 1
+            fi
+          done
 
-            - name: Create release
-              uses: softprops/action-gh-release@v1
-              with:
-                  files: |
-                      main.js
-                      manifest.json
-                      styles.css
-                  token: ${{ secrets.GITHUB_TOKEN }}
-                  tag_name: ${{ env.TAG_NAME }}
-                  prerelease: false
-                  draft: false
+      - name: Generate release notes
+        run: |
+          if [ -f release-notes.mjs ]; then
+            node release-notes.mjs > release-notes.md
+          else
+            echo 'Fallback release note' > release-notes.md
+          fi
 
-            - name: Create and merge pull request from main to develop
-              run: |
-                  gh pr create -B develop -H main --title 'Merge main into develop' --body 'Merge main into develop'
-                  gh pr merge main --merge --auto --body 'Merge main into develop'
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag: ${{ github.ref }}
+          files:
+            - main.js
+            - manifest.json
+            - styles.css
+          name: Release ${{ github.ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
